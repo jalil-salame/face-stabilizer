@@ -1,0 +1,18 @@
+[package]
+name = "face-stabilizer"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.3.19", features = ["derive", "env"] }
+log = "0.4.19"
+anyhow = "1.0.72"
+env_logger = "0.10.0"
+dlib-face-recognition = "0.3.1"
+image = "0.24.6"
+imageproc = "0.23.0"
+
+[patch.crates-io]
+dlib-face-recognition = { git = "https://github.com/jalil-salame/dlib-face-recognition.git", branch = "use-cpp14" }
