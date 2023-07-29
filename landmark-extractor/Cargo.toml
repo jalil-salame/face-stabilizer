@@ -1,0 +1,14 @@
+[package]
+name = "landmark-extractor"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+dlib-face-recognition.git = "https://github.com/ulagbulag/dlib-face-recognition.git"
+serde = { version = "1.0.178", optional = true, features = ["derive"] }
+image = { version = "0.24.6", optional = true }
+
+[features]
+default = ["serde", "image"]
