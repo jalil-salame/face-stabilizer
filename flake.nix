@@ -30,7 +30,24 @@
 
         # Add extra inputs here or any other derivation settings
         # doCheck = true;
-        buildInputs = [pkgs.dlib pkgs.blas pkgs.lapack];
+        buildInputs = [
+          pkgs.dlib
+          pkgs.blas
+          pkgs.lapack
+          pkgs.expat
+          pkgs.fontconfig
+          pkgs.freetype
+          pkgs.freetype.dev
+          pkgs.libGL
+          pkgs.pkgconfig
+          pkgs.vulkan-loader
+          pkgs.wayland
+          pkgs.xorg.libX11
+          pkgs.xorg.libXcursor
+          pkgs.xorg.libXi
+          pkgs.xorg.libXrandr
+          pkgs.xorg.libXrandr
+        ];
         nativeBuildInputs = [pkgs.openssl pkgs.pkgconfig pkgs.blas.dev pkgs.lapack.dev];
       };
       wrapper = pkgs.writeShellScriptBin "face-stabilizer" ''

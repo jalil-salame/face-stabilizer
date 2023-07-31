@@ -16,6 +16,13 @@ env_logger = "0.10.0"
 dlib-face-recognition.git = "https://github.com/ulagbulag/dlib-face-recognition.git"
 image = "0.24.6"
 landmark-extractor.path = "./landmark-extractor"
-rayon = "1.7.0"
+rayon = { version = "1.7.0", optional = true }
 ron = "0.8.0"
 indicatif = "0.17.5"
+iced = { version = "0.10.0", features = ["image"], optional = true }
+rfd = { version = "0.11.4", default-features = false, features = ["xdg-portal"], optional = true }
+
+[features]
+default = ["rayon", "gui"]
+rayon = ["dep:rayon", "indicatif/rayon"]
+gui = ["iced", "rfd"]
