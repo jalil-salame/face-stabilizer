@@ -1,38 +1,31 @@
-use std::ops::Deref;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::path::Path;
 
 use anyhow::anyhow;
 use anyhow::bail;
+use anyhow::ensure;
 use anyhow::Context;
 use clap::Parser;
 use clap::Subcommand;
 use dlib_face_recognition::FaceDetector;
 use dlib_face_recognition::ImageMatrix;
 use dlib_face_recognition::LandmarkPredictor;
-#[cfg(feature = "gui")]
-use iced::Sandbox;
+use imageproc::geometric_transformations::warp;
+use imageproc::geometric_transformations::Interpolation;
 use landmark_extractor::Faces;
+use landmark_extractor::Landmarks;
 use log::debug;
-use log::error;
 use log::info;
 use log::warn;
+
+#[cfg(feature = "gui")]
+mod gui;
 
 #[derive(Debug, Parser)]
 struct Opts {
     #[command(subcommand)]
     command: Actions,
-}
-
-macro_rules! log_err_bail {
-    ($e:expr) => {
-        match $e {
-            Ok(v) => v,
-            Err(err) => {
-                error!("{err}");
-                return;
-            }
-        }
-    };
 }
 
 #[derive(Debug, Subcommand)]
@@ -50,6 +43,13 @@ enum Actions {
         /// Whether to pretty print the extracted text
         #[arg(short, long)]
         pretty: bool,
+    },
+    Transform {
+        /// Path to the extracted features
+        features: PathBuf,
+        /// Directory where to place the transformed images
+        #[arg(short, long, default_value = "./out")]
+        output_dir: PathBuf,
     },
     /// Launch a GUI
     #[cfg(feature = "gui")]
@@ -70,72 +70,62 @@ fn main() -> anyhow::Result<()> {
             output,
             pretty,
         } => extract_features(shape_predictor, image_dir, output, pretty),
+        Actions::Transform {
+            features,
+            output_dir,
+        } => {
+            ensure!(features.exists(), "could not find {}", features.display());
+            ensure!(features.is_file(), "{} is not a file", features.display());
+            let file = std::fs::File::open(features).context("opening features file")?;
+            let features: Features =
+                ron::de::from_reader(file).context("deserializing features")?;
+            let mut features: Vec<_> = features.into_iter().collect();
+            features.sort_by_cached_key(|f| f.0.clone());
+            if !output_dir.exists() {
+                std::fs::create_dir(&output_dir)
+                    .with_context(|| format!("creating {} directory", output_dir.display()))?;
+            } else {
+                ensure!(
+                    output_dir.is_dir(),
+                    "{} is not a directory",
+                    output_dir.display()
+                );
+            }
+            let out_path = |file: &Path| output_dir.join(file.file_name().expect("valid file name"));
+
+            let (ref_path, ref_feat) = features.swap_remove(0);
+            ensure!(
+                ref_feat.len() == 1,
+                "reference face should have exactly one face"
+            );
+            let (_, ref_feat) = ref_feat.iter().next().unwrap().clone().into();
+            std::fs::copy(&ref_path, out_path(&ref_path))?;
+            for (img_path, img_feat) in features {
+                if img_feat.len() != 1 {
+                    warn!(
+                        "{} does not have a single face, it has {} instead",
+                        img_path.display(),
+                        img_feat.len()
+                    );
+                    continue;
+                }
+                let (_, img_feat) = img_feat.iter().next().unwrap().clone().into();
+                let img = image::open(&img_path)
+                    .with_context(|| format!("opening image {}", img_path.display()))?
+                    .into_rgb8();
+                let out = out_path(&img_path);
+                apply_projection(&ref_feat, &img_feat, &img)
+                    .save(&out)
+                    .with_context(|| format!("saving image to {}", out.display()))?;
+            }
+            Ok(())
+        }
         #[cfg(feature = "gui")]
-        Actions::GUI => Gui::run(iced::Settings {
+        Actions::GUI => gui::Gui::run(iced::Settings {
             // default_font: iced::Font::with_name("DejaVu Sans"),
             ..iced::Settings::default()
         })
         .context("running gui"),
-    }
-}
-
-#[cfg(feature = "gui")]
-#[derive(Debug, Default, Clone)]
-enum Message {
-    #[default]
-    NoOp,
-    SelectFeaturesFile,
-}
-
-#[derive(Debug, Default, Clone)]
-#[cfg(feature = "gui")]
-struct Gui {
-    images: Vec<PathBuf>,
-    features: std::collections::HashMap<PathBuf, Faces>,
-}
-
-#[cfg(feature = "gui")]
-impl iced::Sandbox for Gui {
-    type Message = Message;
-
-    fn new() -> Self {
-        Self::default()
-    }
-
-    fn title(&self) -> String {
-        "Extract Facial Features".to_string()
-    }
-
-    fn update(&mut self, message: Self::Message) {
-        match message {
-            Message::NoOp => {}
-            Message::SelectFeaturesFile => {
-                if let Some(file) = rfd::FileDialog::new()
-                    .set_title("Open Encoded Features")
-                    .pick_file()
-                {
-                    let data =
-                        log_err_bail!(std::fs::read(&file)
-                            .with_context(|| format!("reading {}", file.display())));
-                    self.features =
-                        log_err_bail!(ron::de::from_bytes(&data).context("decoding features"));
-                }
-            }
-        }
-    }
-
-    fn view(&self) -> iced::Element<'_, Self::Message> {
-        use iced::widget::button;
-        use iced::widget::column;
-
-        column![
-            iced::widget::vertical_space(iced::Length::Fill),
-            button("Open Encoded Features").on_press(Message::SelectFeaturesFile),
-            iced::widget::vertical_space(iced::Length::Fill),
-        ]
-        .align_items(iced::Alignment::Center)
-        .spacing(8)
-        .into()
     }
 }
 
@@ -199,19 +189,17 @@ fn extract_features(
     #[cfg(not(feature = "rayon"))]
     let iter = image_paths.into_iter();
 
-    let features: std::collections::HashMap<_, _> = iter
+    let features: Features = iter
         .progress_with_style(style)
-        .map(
-            |path| -> anyhow::Result<(PathBuf, landmark_extractor::Faces)> {
-                let img = image::open(&path)
-                    .with_context(|| format!("failed to open {}", path.display()))?
-                    .into_rgb8();
-                let mat = ImageMatrix::from_image(&img);
-                let detector = FaceDetector::new(); // Detector shouldn't be sync https://github.com/ulagbulag/dlib-face-recognition/issues/25
-                let landmarks = landmark_extractor::extract_landmarks(&mat, &detector, &predictor);
-                Ok((path, landmarks))
-            },
-        )
+        .map(|path| -> anyhow::Result<(PathBuf, Faces)> {
+            let img = image::open(&path)
+                .with_context(|| format!("failed to open {}", path.display()))?
+                .into_rgb8();
+            let mat = ImageMatrix::from_image(&img);
+            let detector = FaceDetector::new(); // Detector shouldn't be sync https://github.com/ulagbulag/dlib-face-recognition/issues/25
+            let landmarks = landmark_extractor::extract_landmarks(&mat, &detector, &predictor);
+            Ok((path, landmarks))
+        })
         .collect::<anyhow::Result<_>>()?;
 
     info!("finished processing");
@@ -223,4 +211,18 @@ fn extract_features(
     }
     .context("serializing landmarks to a file")?;
     Ok(())
+}
+
+type Features = HashMap<PathBuf, Faces>;
+
+fn apply_projection(
+    target: &Landmarks,
+    points: &Landmarks,
+    image: &image::RgbImage,
+) -> image::ImageBuffer<image::Rgb<u8>, Vec<u8>> {
+    let target = target.iter().map(|&(x, y)| (x as f32, y as f32).into());
+    let points = points.iter().map(|&(x, y)| (x as f32, y as f32).into());
+    let proj = stabilizer::procrustes_superimposition(target, points)
+        .expect("neither points nor target are empty and they have the same length");
+    warp(image, &proj, Interpolation::Bicubic, image::Rgb([0, 0, 0]))
 }

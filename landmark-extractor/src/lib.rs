@@ -65,7 +65,7 @@ impl From<Rect> for Rectangle {
     }
 }
 
-impl From<Rectangle> for Rect{
+impl From<Rectangle> for Rect {
     fn from(value: Rectangle) -> Self {
         let Rectangle {
             left,
