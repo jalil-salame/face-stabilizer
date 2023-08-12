@@ -92,17 +92,19 @@ pub fn procrustes_superimposition(
     // Calculate translation vector
     let tt = center(&mut target)?;
     let pt = center(&mut points)?;
-    let t = tt - pt;
+    // let t = tt - pt;
     // Calculate the scale
     let ts = scale(&mut target)?;
     let ps = scale(&mut points)?;
-    let s = ts / ps;
+    // let s = ts / ps;
     // Calculate rotation
     let theta = rotation(&target, &points)?;
     // Create Projection
     Some(
-        Projection::translate(t.x, t.y)
-            .and_then(Projection::scale(s, s))
-            .and_then(Projection::rotate(theta)),
+        Projection::translate(-pt.x, -pt.y)
+            .and_then(Projection::scale(1.0 / ps, 1.0 / ps))
+            .and_then(Projection::rotate(theta))
+            .and_then(Projection::scale(ts, ts))
+            .and_then(Projection::translate(tt.x, tt.y)),
     )
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::path::Path;
+use std::path::PathBuf;
 
 use anyhow::anyhow;
 use anyhow::bail;
@@ -91,7 +91,8 @@ fn main() -> anyhow::Result<()> {
                     output_dir.display()
                 );
             }
-            let out_path = |file: &Path| output_dir.join(file.file_name().expect("valid file name"));
+            let out_path =
+                |file: &Path| output_dir.join(file.file_name().expect("valid file name"));
 
             let (ref_path, ref_feat) = features.swap_remove(0);
             ensure!(
@@ -100,25 +101,44 @@ fn main() -> anyhow::Result<()> {
             );
             let (_, ref_feat) = ref_feat.iter().next().unwrap().clone().into();
             std::fs::copy(&ref_path, out_path(&ref_path))?;
-            for (img_path, img_feat) in features {
-                if img_feat.len() != 1 {
-                    warn!(
-                        "{} does not have a single face, it has {} instead",
-                        img_path.display(),
-                        img_feat.len()
-                    );
-                    continue;
-                }
-                let (_, img_feat) = img_feat.iter().next().unwrap().clone().into();
-                let img = image::open(&img_path)
-                    .with_context(|| format!("opening image {}", img_path.display()))?
-                    .into_rgb8();
-                let out = out_path(&img_path);
-                apply_projection(&ref_feat, &img_feat, &img)
-                    .save(&out)
-                    .with_context(|| format!("saving image to {}", out.display()))?;
-            }
-            Ok(())
+
+            use indicatif::*;
+            let style = ProgressStyle::with_template(
+                "[{pos:>4}/{len:4}] {msg} {bar} [{per_sec} {eta_precise}]",
+            )
+            .expect("valid template");
+
+            #[cfg(feature = "rayon")]
+            use rayon::prelude::*;
+            #[cfg(feature = "rayon")]
+            let features = features.into_par_iter();
+            #[cfg(not(feature = "rayon"))]
+            let features = features.into_iter();
+
+            features
+                .progress_with_style(style)
+                .map(|(img_path, img_feat)| {
+                    if img_feat.len() != 1 {
+                        warn!(
+                            "{} does not have a single face, it has {} instead",
+                            img_path.display(),
+                            img_feat.len()
+                        );
+                        return Ok(());
+                    }
+
+                    let (_, img_feat) = img_feat.iter().next().unwrap().clone().into();
+                    let img = image::open(&img_path)
+                        .with_context(|| format!("opening image {}", img_path.display()))?
+                        .into_rgb8();
+
+                    let out = out_path(&img_path);
+
+                    apply_projection(&ref_feat, &img_feat, &img)
+                        .save(&out)
+                        .with_context(|| format!("saving image to {}", out.display()))
+                })
+                .collect()
         }
         #[cfg(feature = "gui")]
         Actions::GUI => gui::Gui::run(iced::Settings {
