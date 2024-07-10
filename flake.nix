@@ -18,6 +18,7 @@
     flake-utils.lib.eachDefaultSystem (
       system:
       let
+        inherit (nixpkgs) lib;
         pkgs = import nixpkgs { inherit system; };
         shape-predictor = pkgs.stdenv.mkDerivation {
           name = "shape-predictor-68-face-landmarks";
@@ -79,11 +80,39 @@
         };
         apps.default = flake-utils.lib.mkApp { drv = wrapper; };
         devShells.default = pkgs.mkShell {
-          inputsFrom = builtins.attrValues self.checks.${system};
-          nativeBuildInputs = [
-            pkgs.cargo
-            pkgs.rustc
+          buildInputs = with pkgs; [
+            dlib
+            blas
+            lapack
+            expat
+            fontconfig
+            freetype
+            freetype.dev
+            libGL
+            pkg-config
+            vulkan-loader
+            wayland
+            xorg.libX11
+            xorg.libXcursor
+            xorg.libXi
+            xorg.libXrandr
+            xorg.libXrandr
           ];
+          nativeBuildInputs = with pkgs; [
+            openssl
+            pkg-config
+            blas.dev
+            lapack.dev
+          ];
+          LD_LIBRARY_PATH = lib.makeLibraryPath (
+            with pkgs;
+            [
+              stdenv.cc.cc.lib
+              dlib
+              blas
+              lapack
+            ]
+          );
           SHAPE_PREDICTOR = "${shape-predictor}";
         };
       }
