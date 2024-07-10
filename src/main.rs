@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     let opts = Opts::parse();
-    debug!("Recieved {opts:?}");
+    debug!("Received {opts:?}");
 
     match opts.command {
         Actions::ExtractFeatures {
@@ -161,7 +161,7 @@ fn extract_features(
         backup.set_extension(output.extension().map_or("bak".to_string(), |ext| {
             format!("{}.bak", ext.to_str().unwrap_or(""))
         }));
-        std::fs::rename(&output, backup).context("trying to backup the ouput file")?;
+        std::fs::rename(&output, backup).context("trying to backup the output file")?;
     }
     let output = std::fs::File::create(output)?;
 

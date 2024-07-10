@@ -52,25 +52,25 @@ pub fn scale(points: &mut [Vec2]) -> Option<f32> {
     Some(s)
 }
 
-/// Calculate the angle of rotation that reduces the error between [`referece`] and [`points`]. The
+/// Calculate the angle of rotation that reduces the error between [`reference`] and [`points`]. The
 /// resulting angle will be between [-π/2, π/2] radians.
 ///
 /// Expects both the reference and the points to be centered and scaled, use [`center`] and
 /// [`scale`] to achieve this.
 ///
 /// Returns [`None`] if empty
-pub fn rotation(referece: &[Vec2], points: &[Vec2]) -> Option<f32> {
-    if points.is_empty() || (points.len() != referece.len()) {
+pub fn rotation(reference: &[Vec2], points: &[Vec2]) -> Option<f32> {
+    if points.is_empty() || (points.len() != reference.len()) {
         return None;
     }
     let top: f32 = points
         .iter()
-        .zip(referece)
+        .zip(reference)
         .map(|(p, r)| p.x * r.y - p.y * r.x)
         .sum();
     let bot: f32 = points
         .iter()
-        .zip(referece)
+        .zip(reference)
         .map(|(p, r)| p.x * r.x + p.y * r.y)
         .sum();
     Some((top / bot).atan())
