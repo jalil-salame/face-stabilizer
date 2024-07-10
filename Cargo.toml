@@ -1,8 +1,5 @@
 [workspace]
-members = [
-	"landmark-extractor/",
-	"stabilizer",
-]
+members = ["landmark-extractor/", "stabilizer"]
 
 [package]
 name = "face-stabilizer"
@@ -11,21 +8,30 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-clap = { version = "4.3.19", features = ["derive", "env"] }
-log = "0.4.19"
-anyhow = "1.0.72"
-env_logger = "0.10.0"
-dlib-face-recognition.git = "https://github.com/ulagbulag/dlib-face-recognition.git"
-image = "0.24.6"
+[workspace.dependencies]
+dlib-face-recognition = "0.3.2"
+# dlib-face-recognition uses image v0.24 so we need to pin image and imageproc to make use of the same version
+image = "0.24.9"
 imageproc = "0.23.0"
-landmark-extractor.path = "./landmark-extractor"
-stabilizer.path = "./stabilizer"
-rayon = { version = "1.7.0", optional = true }
-ron = "0.8.0"
+log = "0.4.19"
+
+[dependencies]
+anyhow = "1.0.72"
+clap = { version = "4.3.19", features = ["derive", "env"] }
+dlib-face-recognition.workspace = true
+env_logger = "0.11.3"
+iced = { version = "0.12.1", features = ["image"], optional = true }
+image.workspace = true
+imageproc.workspace = true
 indicatif = "0.17.5"
-iced = { version = "0.10.0", features = ["image"], optional = true }
-rfd = { version = "0.11.4", default-features = false, features = ["xdg-portal"], optional = true }
+landmark-extractor.path = "./landmark-extractor"
+log.workspace = true
+rayon = { version = "1.7.0", optional = true }
+rfd = { version = "0.14.1", default-features = false, features = [
+  "xdg-portal",
+], optional = true }
+ron = "0.8.1"
+stabilizer.path = "./stabilizer"
 
 [features]
 default = ["rayon"]
