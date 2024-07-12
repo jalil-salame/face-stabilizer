@@ -83,22 +83,17 @@ pub fn rotation(reference: &[Vec2], points: &[Vec2]) -> Option<f32> {
 /// transformed.
 ///
 /// Returns [`None`] if empty
-pub fn procrustes_superimposition(
-    target: impl IntoIterator<Item = Vec2>,
-    points: impl IntoIterator<Item = Vec2>,
-) -> Option<Projection> {
-    let mut target: Vec<_> = target.into_iter().collect();
-    let mut points: Vec<_> = points.into_iter().collect();
+pub fn procrustes_superimposition(target: &mut [Vec2], points: &mut [Vec2]) -> Option<Projection> {
     // Calculate translation vector
-    let tt = center(&mut target)?;
-    let pt = center(&mut points)?;
+    let tt = center(target)?;
+    let pt = center(points)?;
     // let t = tt - pt;
     // Calculate the scale
-    let ts = scale(&mut target)?;
-    let ps = scale(&mut points)?;
+    let ts = scale(target)?;
+    let ps = scale(points)?;
     // let s = ts / ps;
     // Calculate rotation
-    let theta = rotation(&target, &points)?;
+    let theta = rotation(target, points)?;
     // Create Projection
     Some(
         Projection::translate(-pt.x, -pt.y)

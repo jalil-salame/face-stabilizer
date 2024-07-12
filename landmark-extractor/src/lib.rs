@@ -111,7 +111,7 @@ impl From<Landmarks> for Box<[Point]> {
 
 impl From<FaceLandmarks> for Landmarks {
     fn from(value: FaceLandmarks) -> Self {
-        Self(value.to_vec().into_iter().map(|p| (p.x(), p.y())).collect())
+        Self(value.iter().copied().map(|p| (p.x(), p.y())).collect())
     }
 }
 
@@ -134,6 +134,6 @@ pub fn extract_landmarks(
 /// Helper function to load an [`ImageMatrix`] from a path
 #[cfg(feature = "image")]
 pub fn img_mat_from_path(img_path: &std::path::Path) -> image::ImageResult<ImageMatrix> {
-    let image = image::open(&img_path)?.into_rgb8();
+    let image = image::open(img_path)?.into_rgb8();
     Ok(ImageMatrix::from_image(&image))
 }
