@@ -16,7 +16,6 @@ imageproc = "0.23.0"
 log = "0.4.19"
 
 [dependencies]
-anyhow = "1.0.72"
 clap = { version = "4.3.19", features = ["derive", "env"] }
 dlib-face-recognition.workspace = true
 env_logger = "0.11.3"
@@ -26,6 +25,7 @@ imageproc.workspace = true
 indicatif = "0.17.5"
 landmark-extractor.path = "./landmark-extractor"
 log.workspace = true
+miette = { version = "7.2.0", features = ["fancy"] }
 rayon = { version = "1.7.0", optional = true }
 rfd = { version = "0.14.1", default-features = false, features = [
   "xdg-portal",
