@@ -1,4 +1,7 @@
 /target
 result
-/out
 /.direnv
+# default outputs
+/out
+/landmarks.ron
+/landmarks.ron.bak

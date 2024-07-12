@@ -9,6 +9,11 @@ use dlib_face_recognition::ImageMatrix;
 use dlib_face_recognition::LandmarkPredictor;
 use imageproc::geometric_transformations::warp;
 use imageproc::geometric_transformations::Interpolation;
+#[cfg(feature = "rayon")]
+use indicatif::ParallelProgressIterator;
+#[cfg(not(feature = "rayon"))]
+use indicatif::ProgressIterator;
+use indicatif::ProgressStyle;
 use landmark_extractor::Faces;
 use landmark_extractor::Landmarks;
 use log::debug;
@@ -19,6 +24,8 @@ use miette::ensure;
 use miette::Context;
 use miette::IntoDiagnostic;
 use miette::Result;
+#[cfg(feature = "rayon")]
+use rayon::prelude::*;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -232,26 +239,9 @@ fn extract_features(
             .expect("valid template");
 
     #[cfg(feature = "rayon")]
-    use rayon::prelude::*;
-    #[cfg(feature = "rayon")]
-    let iter = image_paths.into_par_iter();
-
+    let features = par_extract(image_paths, style, &predictor)?;
     #[cfg(not(feature = "rayon"))]
-    let iter = image_paths.into_iter();
-
-    let features: Features = iter
-        .progress_with_style(style)
-        .map(|path| -> Result<(PathBuf, Faces)> {
-            let img = image::open(&path)
-                .into_diagnostic()
-                .with_context(|| format!("failed to open {}", path.display()))?
-                .into_rgb8();
-            let mat = ImageMatrix::from_image(&img);
-            let detector = FaceDetector::new(); // Detector shouldn't be sync https://github.com/ulagbulag/dlib-face-recognition/issues/25
-            let landmarks = landmark_extractor::extract_landmarks(&mat, &detector, &predictor);
-            Ok((path, landmarks))
-        })
-        .collect::<Result<_>>()?;
+    let features = extract(image_paths, style, &predictor)?;
 
     info!("finished processing");
     info!("serializing to file");
@@ -263,6 +253,54 @@ fn extract_features(
     .into_diagnostic()
     .context("serializing landmarks to a file")?;
     Ok(())
+}
+
+#[cfg(not(feature = "rayon"))]
+fn extract(
+    image_paths: Vec<PathBuf>,
+    style: ProgressStyle,
+    predictor: &LandmarkPredictor,
+) -> Result<Features> {
+    let detector = FaceDetector::new();
+    image_paths
+        .into_iter()
+        .progress_with_style(style)
+        .map(|path| -> Result<(PathBuf, Faces)> {
+            let img = image::open(&path)
+                .into_diagnostic()
+                .with_context(|| format!("failed to open {}", path.display()))?
+                .into_rgb8();
+            let mat = ImageMatrix::from_image(&img);
+            let landmarks = landmark_extractor::extract_landmarks(&mat, &detector, predictor);
+            Ok((path, landmarks))
+        })
+        .collect::<Result<_>>()
+}
+
+#[cfg(feature = "rayon")]
+fn par_extract(
+    image_paths: Vec<PathBuf>,
+    style: ProgressStyle,
+    predictor: &LandmarkPredictor,
+) -> Result<Features> {
+    thread_local! {
+        static DETECTOR: FaceDetector = FaceDetector::new();
+    };
+    image_paths
+        .into_par_iter()
+        .progress_with_style(style)
+        .map(|path| -> Result<(PathBuf, Faces)> {
+            let img = image::open(&path)
+                .into_diagnostic()
+                .with_context(|| format!("failed to open {}", path.display()))?
+                .into_rgb8();
+            let image = ImageMatrix::from_image(&img);
+            let landmarks = DETECTOR.with(|detector| {
+                landmark_extractor::extract_landmarks(&image, detector, predictor)
+            });
+            Ok((path, landmarks))
+        })
+        .collect::<Result<_>>()
 }
 
 type Features = HashMap<PathBuf, Faces>;
