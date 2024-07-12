@@ -37,7 +37,10 @@ fn main() -> Result<()> {
     // Pretty panics
     miette::set_panic_hook();
     // Configure using RUST_LOG=* (ie. RUST_LOG=info)
-    env_logger::init();
+    env_logger::builder()
+        .filter_level(log::LevelFilter::Info)
+        .parse_default_env()
+        .init();
     // Parse opts
     let opts = Opts::parse();
     debug!("Received {opts:?}");
@@ -53,16 +56,63 @@ struct Opts {
 impl Opts {
     fn run(self) -> Result<()> {
         match self.command {
+            Actions::Stabilize {
+                shape_predictor,
+                image_dir,
+                output_dir,
+            } => {
+                // Extract features
+                let features = extract_features(&shape_predictor, &image_dir)?;
+                // Transform images
+                transform_images(features, &output_dir)
+            }
             Actions::ExtractFeatures {
                 shape_predictor,
                 image_dir,
                 output,
                 pretty,
-            } => extract_features(&shape_predictor, &image_dir, &output, pretty),
+            } => {
+                // Backup previous results
+                if output.exists() {
+                    warn!("{} exists, making a backup", output.display());
+                    let mut backup = output.to_path_buf();
+                    backup.set_extension(output.extension().map_or("bak".to_string(), |ext| {
+                        format!("{}.bak", ext.to_str().unwrap_or(""))
+                    }));
+                    std::fs::rename(&output, backup)
+                        .into_diagnostic()
+                        .context("trying to backup the output file")?;
+                }
+                // Ensure we can create the output file before extracting features
+                let output = std::fs::File::create(output).into_diagnostic()?;
+                // Extract features
+                let features = extract_features(&shape_predictor, &image_dir)?;
+                // Serialize results
+                info!("serializing to file");
+                if pretty {
+                    ron::ser::to_writer_pretty(output, &features, ron::ser::PrettyConfig::default())
+                } else {
+                    ron::ser::to_writer(output, &features)
+                }
+                .into_diagnostic()
+                .context("serializing landmarks to a file")
+            }
             Actions::Transform {
                 features,
                 output_dir,
-            } => transform_images(&features, &output_dir),
+            } => {
+                // Retrieve extracted features
+                ensure!(features.exists(), "could not find {}", features.display());
+                ensure!(features.is_file(), "{} is not a file", features.display());
+                let file = std::fs::File::open(features)
+                    .into_diagnostic()
+                    .context("opening features file")?;
+                let features = ron::de::from_reader(file)
+                    .into_diagnostic()
+                    .context("deserializing features")?;
+                // Transform images
+                transform_images(features, &output_dir)
+            }
             #[cfg(feature = "gui")]
             Actions::GUI => gui::Gui::run(iced::Settings {
                 // default_font: iced::Font::with_name("DejaVu Sans"),
@@ -75,6 +125,19 @@ impl Opts {
 
 #[derive(Debug, Subcommand)]
 enum Actions {
+    /// Stabilize images
+    ///
+    /// Uses the first image (alphabetically sorted) as a reference
+    Stabilize {
+        /// Path to the Shape Predictor model (also called Facial Landmarks Predictor)
+        #[arg(env, short, long)]
+        shape_predictor: PathBuf,
+        /// Path to a directory containing the images you want to extract the features of
+        image_dir: PathBuf,
+        /// Directory where to place the transformed images
+        #[arg(short, long, default_value = "./out")]
+        output_dir: PathBuf,
+    },
     /// Extract Features from images to process later
     ExtractFeatures {
         /// Path to the Shape Predictor model (also called Facial Landmarks Predictor)
@@ -89,6 +152,7 @@ enum Actions {
         #[arg(short, long)]
         pretty: bool,
     },
+    /// Transform images based on the features extracted previously
     Transform {
         /// Path to the extracted features
         features: PathBuf,
@@ -101,15 +165,7 @@ enum Actions {
     GUI,
 }
 
-fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
-    ensure!(features.exists(), "could not find {}", features.display());
-    ensure!(features.is_file(), "{} is not a file", features.display());
-    let file = std::fs::File::open(features)
-        .into_diagnostic()
-        .context("opening features file")?;
-    let Features { basedir, features }: Features = ron::de::from_reader(file)
-        .into_diagnostic()
-        .context("deserializing features")?;
+fn transform_images(Features { basedir, features }: Features, output_dir: &Path) -> Result<()> {
     let mut features: Vec<_> = features.into_iter().collect();
     features.sort_by_key(|(fname, _features)| fname.clone());
     if !output_dir.exists() {
@@ -152,18 +208,20 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
     #[cfg(feature = "rayon")]
     let features = features.into_par_iter();
     #[cfg(not(feature = "rayon"))]
-    let features = features.into_iter();
+    let features = todo!().into_iter();
 
     features
         .progress_with_style(style)
         .map(|(img_name, img_feat)| {
             let img_path = basedir.join(img_name.as_ref());
-            if img_feat.len() != 1 {
-                warn!(
-                    "{} does not have a single face, it has {} instead",
-                    img_path.display(),
-                    img_feat.len()
-                );
+            if img_feat.len() == 0 {
+                let path = img_path.display();
+                warn!("could not find faces in: {path}");
+                return Ok(());
+            } else if img_feat.len() > 1 {
+                let count = img_feat.len();
+                let path = img_path.display();
+                warn!("found too many faces in: {path} ({count})",);
                 return Ok(());
             }
 
@@ -183,31 +241,14 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
         .collect()
 }
 
-fn extract_features(
-    shape_predictor: &Path,
-    basedir: &Path,
-    output: &Path,
-    pretty: bool,
-) -> Result<()> {
-    if output.exists() {
-        warn!("{} exists, making a backup", output.display());
-        let mut backup = output.to_path_buf();
-        backup.set_extension(output.extension().map_or("bak".to_string(), |ext| {
-            format!("{}.bak", ext.to_str().unwrap_or(""))
-        }));
-        std::fs::rename(output, backup)
-            .into_diagnostic()
-            .context("trying to backup the output file")?;
-    }
-    let output = std::fs::File::create(output).into_diagnostic()?;
-
+fn extract_features(shape_predictor: &Path, basedir: &Path) -> Result<Features> {
     let file = shape_predictor.display();
     info!("Loading shape predictor from {file}",);
     if !shape_predictor.is_file() {
         bail!("{file} is not a regular file (or doesn't exist).",);
     }
     let predictor = LandmarkPredictor::open(shape_predictor).map_err(|err| miette::miette!(err))?;
-
+    // Get image names
     let imgs: Vec<_> = std::fs::read_dir(basedir)
         .into_diagnostic()
         .context("trying to open image_dir")?
@@ -237,24 +278,16 @@ fn extract_features(
             Some(Ok(dir_ent.file_name().into_boxed_os_str()))
         })
         .collect::<Result<_>>()?;
-
-    use indicatif::*;
-    let style =
+    // Extract features from images
+    let features = extract(
+        basedir,
+        imgs,
         ProgressStyle::with_template("[{pos:>4}/{len:4}] {msg} {bar} [{per_sec} {eta_precise}]")
-            .expect("valid template");
-
-    let features = extract(basedir, imgs, style, &predictor)?;
-
+            .expect("valid template"),
+        &predictor,
+    )?;
     info!("finished processing");
-    info!("serializing to file");
-    if pretty {
-        ron::ser::to_writer_pretty(output, &features, ron::ser::PrettyConfig::default())
-    } else {
-        ron::ser::to_writer(output, &features)
-    }
-    .into_diagnostic()
-    .context("serializing landmarks to a file")?;
-    Ok(())
+    Ok(features)
 }
 
 #[cfg(not(feature = "rayon"))]
