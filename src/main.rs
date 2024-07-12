@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::ffi::OsStr;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -26,6 +27,8 @@ use miette::IntoDiagnostic;
 use miette::Result;
 #[cfg(feature = "rayon")]
 use rayon::prelude::*;
+use serde::Deserialize;
+use serde::Serialize;
 
 #[cfg(feature = "gui")]
 mod gui;
@@ -104,11 +107,11 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
     let file = std::fs::File::open(features)
         .into_diagnostic()
         .context("opening features file")?;
-    let features: Features = ron::de::from_reader(file)
+    let Features { basedir, features }: Features = ron::de::from_reader(file)
         .into_diagnostic()
         .context("deserializing features")?;
     let mut features: Vec<_> = features.into_iter().collect();
-    features.sort_by_cached_key(|f| f.0.clone());
+    features.sort_by_key(|(fname, _features)| fname.clone());
     if !output_dir.exists() {
         std::fs::create_dir(output_dir)
             .into_diagnostic()
@@ -120,21 +123,22 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
             output_dir.display()
         );
     }
-    let out_path = |file: &Path| output_dir.join(file.file_name().expect("valid file name"));
+    let out_path = |path: &str| output_dir.join(path);
 
-    let (ref_path, ref_feat) = features.swap_remove(0);
+    let (ref_name, ref_feat) = features.swap_remove(0);
+    let ref_path = basedir.join(ref_name.as_ref());
     ensure!(
         ref_feat.len() == 1,
         "reference face should have exactly one face"
     );
     let (_, ref_feat) = ref_feat.iter().next().unwrap().clone().into();
-    std::fs::copy(&ref_path, out_path(&ref_path))
+    std::fs::copy(ref_path.as_path(), out_path(&ref_name))
         .into_diagnostic()
         .with_context(|| {
             format!(
                 "failed to copy {} to {}",
                 ref_path.display(),
-                out_path(&ref_path).display()
+                out_path(&ref_name).display()
             )
         })?;
 
@@ -152,7 +156,8 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
 
     features
         .progress_with_style(style)
-        .map(|(img_path, img_feat)| {
+        .map(|(img_name, img_feat)| {
+            let img_path = basedir.join(img_name.as_ref());
             if img_feat.len() != 1 {
                 warn!(
                     "{} does not have a single face, it has {} instead",
@@ -168,7 +173,7 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
                 .with_context(|| format!("opening image {}", img_path.display()))?
                 .into_rgb8();
 
-            let out = out_path(&img_path);
+            let out = out_path(img_name.as_ref());
 
             apply_projection(&ref_feat, &img_feat, &img, [0, 0, 0].into())
                 .save(&out)
@@ -180,7 +185,7 @@ fn transform_images(features: &Path, output_dir: &Path) -> Result<()> {
 
 fn extract_features(
     shape_predictor: &Path,
-    image_dir: &Path,
+    basedir: &Path,
     output: &Path,
     pretty: bool,
 ) -> Result<()> {
@@ -203,10 +208,10 @@ fn extract_features(
     }
     let predictor = LandmarkPredictor::open(shape_predictor).map_err(|err| miette::miette!(err))?;
 
-    let image_paths: Vec<_> = std::fs::read_dir(image_dir)
+    let imgs: Vec<_> = std::fs::read_dir(basedir)
         .into_diagnostic()
         .context("trying to open image_dir")?
-        .filter_map(|dir_ent| -> Option<Result<PathBuf>> {
+        .filter_map(|dir_ent| {
             let dir_ent = match dir_ent {
                 Ok(dir_ent) => dir_ent,
                 Err(err) => {
@@ -229,7 +234,7 @@ fn extract_features(
                 );
                 return None;
             }
-            Some(Ok(dir_ent.path()))
+            Some(Ok(dir_ent.file_name().into_boxed_os_str()))
         })
         .collect::<Result<_>>()?;
 
@@ -238,10 +243,7 @@ fn extract_features(
         ProgressStyle::with_template("[{pos:>4}/{len:4}] {msg} {bar} [{per_sec} {eta_precise}]")
             .expect("valid template");
 
-    #[cfg(feature = "rayon")]
-    let features = par_extract(image_paths, style, &predictor)?;
-    #[cfg(not(feature = "rayon"))]
-    let features = extract(image_paths, style, &predictor)?;
+    let features = extract(basedir, imgs, style, &predictor)?;
 
     info!("finished processing");
     info!("serializing to file");
@@ -257,39 +259,47 @@ fn extract_features(
 
 #[cfg(not(feature = "rayon"))]
 fn extract(
-    image_paths: Vec<PathBuf>,
+    basedir: &Path,
+    imgs: Vec<Box<OsStr>>,
     style: ProgressStyle,
     predictor: &LandmarkPredictor,
 ) -> Result<Features> {
     let detector = FaceDetector::new();
-    image_paths
+    let features = imgs
         .into_iter()
         .progress_with_style(style)
-        .map(|path| -> Result<(PathBuf, Faces)> {
+        .map(|name| {
+            let path = basedir.join(name.as_ref());
             let img = image::open(&path)
                 .into_diagnostic()
                 .with_context(|| format!("failed to open {}", path.display()))?
                 .into_rgb8();
-            let mat = ImageMatrix::from_image(&img);
-            let landmarks = landmark_extractor::extract_landmarks(&mat, &detector, predictor);
-            Ok((path, landmarks))
+            let image = ImageMatrix::from_image(&img);
+            let landmarks = landmark_extractor::extract_landmarks(&image, &detector, predictor);
+            Ok((name, landmarks))
         })
-        .collect::<Result<_>>()
+        .collect::<Result<_>>()?;
+    Ok(Features {
+        basedir: basedir.to_path_buf(),
+        features,
+    })
 }
 
 #[cfg(feature = "rayon")]
-fn par_extract(
-    image_paths: Vec<PathBuf>,
+fn extract(
+    basedir: &Path,
+    imgs: Vec<Box<OsStr>>,
     style: ProgressStyle,
     predictor: &LandmarkPredictor,
 ) -> Result<Features> {
     thread_local! {
         static DETECTOR: FaceDetector = FaceDetector::new();
     };
-    image_paths
+    let features = imgs
         .into_par_iter()
         .progress_with_style(style)
-        .map(|path| -> Result<(PathBuf, Faces)> {
+        .map(|name| {
+            let path = basedir.join(name.as_ref());
             let img = image::open(&path)
                 .into_diagnostic()
                 .with_context(|| format!("failed to open {}", path.display()))?
@@ -298,12 +308,25 @@ fn par_extract(
             let landmarks = DETECTOR.with(|detector| {
                 landmark_extractor::extract_landmarks(&image, detector, predictor)
             });
-            Ok((path, landmarks))
+            Ok((
+                name.to_string_lossy().to_string().into_boxed_str(),
+                landmarks,
+            ))
         })
-        .collect::<Result<_>>()
+        .collect::<Result<_>>()?;
+    Ok(Features {
+        basedir: basedir.into(),
+        features,
+    })
 }
 
-type Features = HashMap<PathBuf, Faces>;
+#[derive(Debug, Serialize, Deserialize)]
+struct Features {
+    /// The directory with all the images
+    basedir: Box<Path>,
+    /// Mapping from Filename -> Faces
+    features: HashMap<Box<str>, Faces>,
+}
 
 fn apply_projection(
     target: &Landmarks,

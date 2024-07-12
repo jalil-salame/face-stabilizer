@@ -1168,6 +1168,7 @@ dependencies = [
  "rayon",
  "rfd",
  "ron",
+ "serde",
  "stabilizer",
 ]
 

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 dlib-face-recognition.workspace = true
-serde = { version = "1.0.178", optional = true, features = ["derive"] }
+serde = { workspace = true, optional = true, features = ["derive"] }
 image = { workspace = true, optional = true }
 
 [features]

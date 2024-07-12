@@ -1,6 +1,8 @@
 /target
 result
+# Dev stuff
 /.direnv
+/.bacon-locations
 # default outputs
 /out
 /landmarks.ron
