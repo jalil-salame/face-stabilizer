@@ -30,9 +30,6 @@ use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
-#[cfg(feature = "gui")]
-mod gui;
-
 fn main() -> Result<()> {
     // Pretty panics
     miette::set_panic_hook();
@@ -113,12 +110,6 @@ impl Opts {
                 // Transform images
                 transform_images(features, &output_dir)
             }
-            #[cfg(feature = "gui")]
-            Actions::GUI => gui::Gui::run(iced::Settings {
-                // default_font: iced::Font::with_name("DejaVu Sans"),
-                ..iced::Settings::default()
-            })
-            .context("running gui"),
         }
     }
 }
@@ -160,9 +151,6 @@ enum Actions {
         #[arg(short, long, default_value = "./out")]
         output_dir: PathBuf,
     },
-    /// Launch a GUI
-    #[cfg(feature = "gui")]
-    GUI,
 }
 
 fn transform_images(Features { basedir, features }: Features, output_dir: &Path) -> Result<()> {
