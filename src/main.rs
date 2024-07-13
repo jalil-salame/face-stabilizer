@@ -10,10 +10,6 @@ use dlib_face_recognition::ImageMatrix;
 use dlib_face_recognition::LandmarkPredictor;
 use imageproc::geometric_transformations::warp;
 use imageproc::geometric_transformations::Interpolation;
-#[cfg(feature = "rayon")]
-use indicatif::ParallelProgressIterator;
-#[cfg(not(feature = "rayon"))]
-use indicatif::ProgressIterator;
 use indicatif::ProgressStyle;
 use landmark_extractor::Faces;
 use landmark_extractor::Landmarks;
@@ -25,8 +21,6 @@ use miette::ensure;
 use miette::Context;
 use miette::IntoDiagnostic;
 use miette::Result;
-#[cfg(feature = "rayon")]
-use rayon::prelude::*;
 use serde::Deserialize;
 use serde::Serialize;
 
@@ -81,15 +75,15 @@ impl Opts {
                         .context("trying to backup the output file")?;
                 }
                 // Ensure we can create the output file before extracting features
-                let output = std::fs::File::create(output).into_diagnostic()?;
+                let writer = std::fs::File::create(output).into_diagnostic()?;
                 // Extract features
                 let features = extract_features(&shape_predictor, &image_dir)?;
                 // Serialize results
                 info!("serializing to file");
                 if pretty {
-                    ron::ser::to_writer_pretty(output, &features, ron::ser::PrettyConfig::default())
+                    serde_json::ser::to_writer_pretty(writer, &features)
                 } else {
-                    ron::ser::to_writer(output, &features)
+                    serde_json::ser::to_writer(writer, &features)
                 }
                 .into_diagnostic()
                 .context("serializing landmarks to a file")
@@ -104,7 +98,7 @@ impl Opts {
                 let file = std::fs::File::open(features)
                     .into_diagnostic()
                     .context("opening features file")?;
-                let features = ron::de::from_reader(file)
+                let features = serde_json::de::from_reader(file)
                     .into_diagnostic()
                     .context("deserializing features")?;
                 // Transform images
@@ -137,7 +131,7 @@ enum Actions {
         /// Path to a directory containing the images you want to extract the features of
         image_dir: PathBuf,
         /// Path to the output file
-        #[arg(short, long, default_value = "landmarks.ron")]
+        #[arg(short, long, default_value = "landmarks.json")]
         output: PathBuf,
         /// Whether to pretty print the extracted text
         #[arg(short, long)]
@@ -285,6 +279,7 @@ fn extract(
     style: ProgressStyle,
     predictor: &LandmarkPredictor,
 ) -> Result<Features> {
+    use indicatif::ProgressIterator;
     let detector = FaceDetector::new();
     let features = imgs
         .into_iter()
@@ -313,6 +308,8 @@ fn extract(
     style: ProgressStyle,
     predictor: &LandmarkPredictor,
 ) -> Result<Features> {
+    use indicatif::ParallelProgressIterator;
+    use rayon::prelude::*;
     thread_local! {
         static DETECTOR: FaceDetector = FaceDetector::new();
     };

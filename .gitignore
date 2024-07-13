@@ -5,5 +5,5 @@ result
 /.bacon-locations
 # default outputs
 /out
-/landmarks.ron
-/landmarks.ron.bak
+/landmarks.json
+/landmarks.json.bak
