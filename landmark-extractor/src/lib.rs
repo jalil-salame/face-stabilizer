@@ -1,9 +1,21 @@
+use std::path::Path;
+use std::sync::OnceLock;
+
+use dlib_face_recognition::FaceDetector;
+use dlib_face_recognition::FaceDetectorCnn;
 use dlib_face_recognition::FaceDetectorTrait;
 use dlib_face_recognition::FaceLandmarks;
 use dlib_face_recognition::ImageMatrix;
 use dlib_face_recognition::LandmarkPredictorTrait;
 use dlib_face_recognition::Point;
 use dlib_face_recognition::Rectangle;
+
+static CNN_PATH: OnceLock<&Path> = OnceLock::new();
+
+thread_local! {
+    static DETECTOR: FaceDetector = FaceDetector::new();
+    static DETECTOR_CNN: FaceDetectorCnn = get_cnn();
+}
 
 /// Any number of [`Face`]s
 #[derive(Debug, Clone)]
@@ -127,8 +139,28 @@ pub fn extract_landmarks(
         .cloned()
         .map(|face| Face(face.into(), predictor.face_landmarks(image, &face).into()))
         .collect();
-
     Faces(landmarks)
+}
+
+/// Find all faces in this image and identify the landmarks in it
+///
+/// Uses a thread local HOG ([`FaceDetector`])
+pub fn extract_landmarks_fast(
+    image: &ImageMatrix,
+    predictor: &impl LandmarkPredictorTrait,
+) -> Faces {
+    DETECTOR.with(|detector| extract_landmarks(image, detector, predictor))
+}
+
+/// Find all faces in this image and identify the landmarks in it
+///
+/// Uses a thread local CNN detector ([`FaceDetectorCnn`]) that need to be initialized with
+/// [`set_cnn_path`].
+pub fn extract_landmarks_cnn(
+    image: &ImageMatrix,
+    predictor: &impl LandmarkPredictorTrait,
+) -> Faces {
+    DETECTOR_CNN.with(|detector| extract_landmarks(image, detector, predictor))
 }
 
 /// Helper function to load an [`ImageMatrix`] from a path
@@ -136,4 +168,17 @@ pub fn extract_landmarks(
 pub fn img_mat_from_path(img_path: &std::path::Path) -> image::ImageResult<ImageMatrix> {
     let image = image::open(img_path)?.into_rgb8();
     Ok(ImageMatrix::from_image(&image))
+}
+
+pub fn set_cnn_path(path: &Path) -> Result<(), String> {
+    let path_: Box<_> = path.into();
+    match CNN_PATH.set(Box::leak(path_)) {
+        Ok(_) => FaceDetectorCnn::open(path).map(drop),
+        Err(_) => Err("CNN Path already set".to_string()),
+    }
+}
+
+fn get_cnn() -> FaceDetectorCnn {
+    FaceDetectorCnn::open(CNN_PATH.get().expect("CNN Path not set"))
+        .expect("failed to open CNN model")
 }
